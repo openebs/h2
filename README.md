@@ -4,7 +4,8 @@ A Tokio aware, HTTP/2 client & server implementation for Rust.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/h2.svg)](https://crates.io/crates/h2)
-[![Documentation](https://docs.rs/h2/badge.svg)][dox]
+[![Documentation](https://docs.rs/h2/badge.svg)][![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fopenebs%2Fh2.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fopenebs%2Fh2?ref=badge_shield)
+[dox]
 
 More information about this crate can be found in the [crate documentation][dox].
 
@@ -69,3 +70,7 @@ actively maintained.
 [solicit]: https://github.com/mlalic/solicit
 [rust-http2]: https://github.com/stepancheg/rust-http2
 [h2spec]: https://github.com/summerwind/h2spec
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fopenebs%2Fh2.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fopenebs%2Fh2?ref=badge_large)
