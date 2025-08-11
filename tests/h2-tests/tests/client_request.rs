@@ -1352,6 +1352,49 @@ async fn allow_empty_data_for_head() {
 }
 
 #[tokio::test]
+async fn reject_none_zero_content_length_header_with_end_stream() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", 100)
+                .eos(),
+        )
+        .await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let _ = response.await.unwrap_err();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
 async fn early_hints() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -1870,6 +1913,8 @@ async fn receive_settings_frame_twice_with_second_one_non_empty() {
     join(srv, h2).await;
 }
 
+// If the server has not sent a go_away message before dropping the connection
+// make sure the UnexpectedEof error is propogated.
 #[tokio::test]
 async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
     h2_support::trace_init!();
@@ -1906,6 +1951,44 @@ async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
             err.get_io().expect("should be UnexpectedEof").kind(),
             io::ErrorKind::UnexpectedEof,
         );
+    };
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn server_drop_connection_after_go_away() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::go_away(1)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let _ = h2.await.unwrap();
     };
     join(srv, h2).await;
 }

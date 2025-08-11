@@ -1339,7 +1339,7 @@ async fn client_decrease_initial_window_size() {
         conn.drive(async {
             data(&mut body5, "body5 data2").await;
             data(&mut body5, "body5 data3").await;
-            assert!(body3.is_end_stream());
+            assert!(!body3.is_end_stream());
         })
         .await;
 
@@ -1859,137 +1859,133 @@ async fn poll_capacity_wakeup_after_window_update() {
 }
 
 #[tokio::test]
-async fn window_size_decremented_past_zero() {
+async fn window_size_does_not_underflow() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
-        // let _ = client.assert_server_handshake().await;
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
 
-        // preface
-        client.write_preface().await;
+        // Invalid HEADERS frame (missing mandatory fields).
+        client.send_bytes(&[0, 0, 0, 1, 5, 0, 0, 0, 1]).await;
 
-        // the following http 2 bytes are fuzzer-generated
-        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
         client
-            .send_bytes(&[
-                0, 0, 23, 1, 1, 0, 249, 255, 191, 131, 1, 1, 1, 70, 1, 1, 1, 1, 65, 1, 1, 65, 1, 1,
-                65, 1, 1, 1, 1, 1, 1, 190,
-            ])
-            .await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client
-            .send_bytes(&[
-                0, 0, 9, 247, 0, 121, 255, 255, 184, 1, 65, 1, 1, 1, 1, 1, 1, 190,
-            ])
-            .await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client
-            .send_bytes(&[0, 0, 3, 0, 1, 0, 249, 255, 191, 1, 1, 190])
-            .await;
-        client
-            .send_bytes(&[0, 0, 2, 50, 107, 0, 0, 0, 1, 0, 0])
-            .await;
-        client
-            .send_bytes(&[0, 0, 5, 2, 0, 0, 0, 0, 1, 128, 0, 55, 0, 0])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 3, 4, 76, 255, 71, 131])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 74, 33, 0, 3, 107, 50, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 30, 4, 0, 0, 0, 0, 0, 0, 4, 56, 184, 171, 125, 65, 0, 35, 65, 65, 65, 61,
-                232, 87, 115, 89, 116, 0, 4, 0, 58, 33, 125, 33, 79, 3, 107, 49, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
-            ])
-            .await;
-        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 177, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 61, 67, 67, 67,
-                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
-                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
-                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 115, 102, 1, 3, 48, 43,
-                101, 64, 31, 37, 99, 99, 97, 97, 97, 97, 49, 97, 54, 97, 97, 97, 97, 49, 97, 54,
-                97, 99, 54, 53, 53, 51, 53, 99, 99, 97, 97, 99, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0,
-            ])
-            .await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 87, 115, 89, 116])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
-            ])
-            .await;
-        client
-            .send_bytes(&[
-                0, 0, 129, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 18, 67, 67, 61,
-                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 48, 54, 53, 55, 114, 1, 4, 97, 49, 51, 116,
-                64, 2, 117, 115, 4, 103, 101, 110, 116, 64, 8, 57, 111, 110, 116, 101, 110, 115,
-                102, 7, 43, 43, 49, 48, 48, 43, 101, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ])
-            .await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
-        client
-            .send_bytes(&[
-                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
-            ])
+            .send_frame(frames::settings().initial_window_size(1329018135))
             .await;
 
-        // TODO: is CANCEL the right error code to expect here?
-        // client.recv_frame(frames::reset(1).protocol_error()).await;
+        client
+            .send_frame(frames::settings().initial_window_size(3809661))
+            .await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(1467177332))
+            .await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(3844989))
+            .await;
     };
 
     let srv = async move {
         let builder = server::Builder::new();
         let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
 
-        // just keep it open
-        let res = poll_fn(move |cx| srv.poll_closed(cx)).await;
-        tracing::debug!("{:?}", res);
+        poll_fn(move |cx| srv.poll_closed(cx)).await.unwrap();
     };
 
     join(client, srv).await;
+}
+
+#[tokio::test]
+async fn reclaim_reserved_capacity() {
+    use futures::channel::oneshot;
+
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let (depleted_tx, depleted_rx) = oneshot::channel();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383])).await;
+        depleted_tx.send(()).unwrap();
+
+        // By now, this peer's connection window is completely depleted.
+
+        srv.recv_frame(frames::headers(3).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+
+        srv.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let mut depleting_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        depleting_stream
+            .send_data(vec![0; 65535].into(), false)
+            .unwrap();
+        h2.drive(depleted_rx).await.unwrap();
+
+        // By now, the client knows it has completely depleted the server's
+        // connection window.
+
+        depleting_stream.reserve_capacity(1);
+
+        let mut starved_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        // The following call puts starved_stream in pending_send, as the
+        // server's connection window is completely empty.
+        starved_stream.send_data(vec![0; 1].into(), false).unwrap();
+
+        // This drop should change nothing, as it didn't actually reserve
+        // any available connection window, only requested it.
+        drop(depleting_stream);
+
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
 }
