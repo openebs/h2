@@ -1,3 +1,7 @@
+# 0.4.19 (August 24, 2026)
+
+* Improve default (auto) small DATA frame budget based on configured connection window.
+
 # 0.4.18 (August 20, 2026)
 
 * Add `data_frame_budget(n)` methods to client and server builders.
