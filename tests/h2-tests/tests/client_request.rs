@@ -102,7 +102,7 @@ async fn request_stream_id_overflows() {
 
     let h2 = async move {
         let (mut client, mut h2) = client::Builder::new()
-            .initial_stream_id(::std::u32::MAX >> 1)
+            .initial_stream_id(u32::MAX >> 1)
             .handshake::<_, Bytes>(io)
             .await
             .unwrap();
@@ -135,12 +135,12 @@ async fn request_stream_id_overflows() {
         let settings = srv.assert_client_handshake().await;
         assert_default_settings!(settings);
         srv.recv_frame(
-            frames::headers(::std::u32::MAX >> 1)
+            frames::headers(u32::MAX >> 1)
                 .request("GET", "https://example.com/")
                 .eos(),
         )
         .await;
-        srv.send_frame(frames::headers(::std::u32::MAX >> 1).response(200).eos())
+        srv.send_frame(frames::headers(u32::MAX >> 1).response(200).eos())
             .await;
         idle_ms(10).await;
     };
@@ -827,7 +827,7 @@ async fn recv_too_big_headers() {
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(40));
         srv.recv_frame(
             frames::headers(1)
                 .request("GET", "https://http2.akamai.com/")
@@ -850,7 +850,7 @@ async fn recv_too_big_headers() {
 
     let client = async move {
         let (mut client, mut conn) = client::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(40)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
@@ -1993,6 +1993,72 @@ async fn server_drop_connection_after_go_away() {
     join(srv, h2).await;
 }
 
+#[tokio::test]
+async fn reset_before_headers_reaches_peer_without_headers() {
+    // Repro: body future errors immediately and hyper/h2 converts that into a
+    // RST_STREAM before the queued HEADERS are ever written, so the peer sees
+    // a reset for an idle stream and treats it as a PROTOCOL_ERROR.
+    h2_support::trace_init!();
+
+    let (io, srv) = mock::new();
+
+    // Server task: perform handshake then observe the first frame.
+    let srv = async move {
+        let mut srv = srv;
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        let frame = tokio::time::timeout(Duration::from_secs(1), srv.next())
+            .await
+            .expect("timed out waiting for first frame")
+            .expect("unexpected EOF")
+            .expect("frame error");
+
+        match frame {
+            frame::Frame::Headers(h) if h.stream_id() == StreamId::from(1) => {
+                assert!(h.is_end_stream() == false);
+            }
+            frame::Frame::Reset(rst) if rst.stream_id() == StreamId::from(1) => {
+                panic!(
+                    "BUG: client sent RST_STREAM before any HEADERS on stream 1; reason={:?}",
+                    rst.reason()
+                );
+            }
+            other => panic!("unexpected first frame: {:?}", other),
+        }
+    };
+
+    // Client task: queue HEADERS, immediately reset, then drive the connection.
+    let client = async move {
+        let (client, conn) = client::handshake(io).await.unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let mut client = client.ready().await.expect("poll_ready");
+        let (_resp_fut, mut send_stream) = client.send_request(req, false).unwrap();
+
+        // Simulate body error (reqwest wraps into io::Error::Other) by resetting
+        // immediately after the stream is created.
+        send_stream.send_reset(Reason::INTERNAL_ERROR);
+
+        // Now start driving the connection so the queued frames get written.
+        let conn_task = tokio::spawn(async move {
+            let _ = conn.await;
+        });
+
+        // Give the connection a moment to flush frames.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        drop(send_stream);
+        let _ = conn_task.await;
+    };
+
+    join(srv, client).await;
+}
+
 const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
@@ -2007,5 +2073,86 @@ impl MockH2 for mock_io::Builder {
             .write(SETTINGS)
             .read(SETTINGS)
             .read(SETTINGS_ACK)
+    }
+}
+
+/// RFC 9113 S5.1: "Receiving any frame other than HEADERS or PRIORITY on a
+/// stream in [idle] state MUST be treated as a connection error of type
+/// PROTOCOL_ERROR."
+#[tokio::test]
+async fn frame_on_pending_open_stream_is_conn_error() {
+    h2_support::trace_init!();
+
+    for scenario in 0..5u8 {
+        let (io, mut srv) = mock::new();
+
+        let srv = async move {
+            let settings = srv
+                .assert_client_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+                .await;
+            assert_default_settings!(settings);
+
+            // 3. Receive stream 1 HEADERS.
+            srv.recv_frame(
+                frames::headers(1)
+                    .request("POST", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+
+            idle_ms(50).await;
+
+            // 4. Send a frame targeting stream 3, whose HEADERS haven't
+            //    been transmitted since it's pending. This is illegal.
+            match scenario {
+                0 => {
+                    srv.send_frame(frames::reset(3).reason(h2::Reason::NO_ERROR))
+                        .await
+                }
+                1 => {
+                    srv.send_frame(frames::reset(3).reason(h2::Reason::CANCEL))
+                        .await
+                }
+                2 => srv.send_frame(frames::window_update(3, 1024)).await,
+                3 => srv.send_frame(frames::headers(3).response(200).eos()).await,
+                4 => srv.send_frame(frames::data(3, &b"hello"[..])).await,
+                _ => unreachable!(),
+            }
+
+            // 5. Client responds with GOAWAY(PROTOCOL_ERROR).
+            srv.recv_frame(frames::go_away(0).protocol_error()).await;
+        };
+
+        let client = async move {
+            let (mut client, mut conn) = client::Builder::new()
+                .initial_max_send_streams(1)
+                .handshake::<_, Bytes>(io)
+                .await
+                .unwrap();
+
+            // 1. Stream 1 fills the concurrent slot
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let (_resp1, _) = client.send_request(request, true).unwrap();
+            client = conn.drive(client.ready()).await.unwrap();
+
+            // 2. Stream 3 is queued
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let (_resp3, _) = client.send_request(request, true).unwrap();
+
+            // 6. Connection error propagates to poll_ready.
+            conn.drive(client.ready())
+                .await
+                .expect_err("connection error");
+        };
+
+        join(srv, client).await;
     }
 }
